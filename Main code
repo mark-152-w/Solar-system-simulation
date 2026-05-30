@@ -1,0 +1,368 @@
+import math
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.animation import FuncAnimation
+import json
+
+global G
+G = 6.674*(10**-11)*(31556952**2)*(5.972*(10**24))/(149597870700**3)
+"G in units of (AU^3⋅Earth_mass−1⋅s−2)"
+sun_mass=332950
+
+class Body:
+    
+    def __init__(self, name, mass, orbital_radius, body_radius, colour):
+        self.name = name
+        self.mass = mass
+        self.body_radius = body_radius
+        self.theta = 0
+        self.colour = colour
+        self.r=orbital_radius
+        self.s = np.array([self.r*math.cos(self.theta), self.r*math.sin(self.theta)])
+        if name!="sun":
+            v_init=np.sqrt(sun_mass*G/orbital_radius)
+        else:
+            v_init=0
+        self.v = np.array([v_init*-math.sin(self.theta), v_init*math.cos(self.theta)])
+        self.s_vals= [self.s]
+        self.a = np.zeros(2)
+        self.a_prev = np.zeros(2)
+        self.a_curr = np.zeros(2)
+        self.a_next = np.zeros(2)
+        self.period_list = []
+        self.orbits=1
+        self.total_orbits=0
+        self.period=0
+        self.xcross=1
+        self.last_crossing = 0
+        self.KE = 0
+        self.PE = 0
+        
+        
+    def set_bodies():
+        """
+        reads values of bodies from file and returns body objects in a list
+        """
+        body_list=[]
+        with open("bodies.json") as f:
+            body_vals = json.load(f)
+            for b in body_vals["bodies"]:
+                body_list.append(Body(b['name'], b['mass'], b['orbital_radius'], \
+                b['body_radius'], b['colour']))
+        return body_list
+
+        
+    def display(body_list, ax, fig):
+        """
+        initialises the plot for the animation, setting the planets
+        """
+        patch_list = []
+        for body in body_list:
+            a=patches.Circle(tuple(body.s), body.body_radius, color = body.colour, \
+            )
+            patch_list.append(a)
+        for i in range(0, len(patch_list)):
+            ax.add_patch(patch_list[i])
+        fig.canvas.draw()
+        return patch_list
+        
+        
+    def acceleration(body_list):
+        
+        """
+        Calculates acceleration for all planets using one function
+        appends new acceleration to list of accelerations
+        """
+        for body in body_list:
+            a=np.zeros(2)
+            for other in body_list:
+                
+                if other != body:
+                    displacement = other.s-body.s
+                    dist = np.linalg.norm(displacement)
+                    mass = other.mass
+                    a+=(G*mass/(dist**3))*displacement
+            body.a = a.copy()
+            body.a_next = a.copy()
+            
+            
+    def energy(body_list, energy_list):
+        """
+        Calculates total energy of the system
+        """
+        global time
+        total_energy = 0
+        for body in body_list:
+            body.PE=0
+            body.KE = 0.5*body.mass*np.dot(body.v, body.v)
+            for other in body_list:
+                if other !=body:
+                    distance = np.linalg.norm(other.s-body.s)
+                    body.PE-=0.5*(G)*body.mass*other.mass/distance
+            total_energy+=body.PE+body.KE
+            energy_list.append(total_energy)
+            return energy_list
+        
+            
+    
+    def orbit(body_list, completed_orbits, min_orbits):
+        """
+        calculates the orbital period as an object variable
+        """
+        global time
+        for body in body_list:
+            if body.s[1] >= 0 and body.xcross == 0:
+                body.orbits+=1
+                body.period = time - body.last_crossing
+                body.xcross = 1
+                body.last_crossing = time
+                body.period_list.append(body.period)
+                body.total_orbits+=1
+                if body.total_orbits==min_orbits and body.name!="sun":
+                    completed_orbits+=1
+                
+            elif body.s[1] <= 0 and body.xcross == 1:
+                body.xcross = 0
+                
+        return completed_orbits
+            
+    def return_orbit(body_list):
+        """
+        averages each orbital period value and prints
+        """
+        for body in body_list:
+            if body.name !="sun":
+                if len(body.period_list)>0:
+                    body.period=sum(body.period_list)/len(body.period_list)
+                    print(f"orbital period of {body.name} = {body.period} years")
+        
+        
+    def timestep(body_list, t):
+        """
+        Calculates new velocity and position, t = timestep
+        Uses Beeman method
+        """
+        global time
+        time+=t
+        "calculates each planet's new position"
+        for body in body_list:
+            a0 = body.a_prev
+            a1 = body.a_curr
+            v = body.v
+            body.s+=v*t+(1/6)*(4*a1-a0)*(t**2)
+            body.s_vals.append(body.s.copy())
+            
+        Body.acceleration(body_list)
+        
+        "calculates each planet's new velocity"
+        for body in body_list:
+            a0 = body.a_prev
+            a1 = body.a_curr
+            a2 = body.a_next
+            body.v+=(1/6)*(2*a2+5*a1-a0)*t
+            body.a_prev = body.a_curr.copy()
+            body.a_curr = body.a_next.copy()
+            
+    def check_alignment(body_list, x):
+        """
+        Checks whether all of the bodies are within x radians of the mean angle
+        """
+        alignment_counter=0
+        global time
+        for body in body_list:
+            if body.name!="sun":
+                body.theta=np.arctan2(body.s[1], body.s[0])
+        angles = [body.theta for body in body_list if body.name != "sun"]
+        mean_angle =  np.arctan2(np.mean(np.sin(angles)), np.mean(np.cos(angles)))
+        for body in body_list:
+            if body.name!="sun" and np.abs(np.mod(body.theta \
+            - mean_angle + np.pi, 2*np.pi) - np.pi) <= x:
+                alignment_counter+=1
+        if alignment_counter == len(body_list)-1:
+            
+            return False
+        else:
+            return True
+            
+    def choose_method():
+        """
+        Prompts the user to select a timestep integration method.
+        Returns the corresponding method function.
+        """
+        print("\nSelect integration method:")
+        print("  1 - Beeman")
+        print("  2 - Euler-Cromer")
+        print("  3 - Direct Euler")
+ 
+        while True:
+            choice = input("Enter 1, 2, or 3: ").strip()
+            if choice == "1":
+                return Body.timestep
+            elif choice == "2":
+                return Body.euler_cromer_timestep
+            elif choice == "3":
+                return Body.direct_euler_timestep
+    
+    def euler_cromer_timestep(body_list, t):
+        """
+        Calculates new velocity and position, t = timestep, using Euler-
+        Cromer method
+        """
+        global time
+        time+=t
+        
+        Body.acceleration(body_list)
+        "calculates each planet's new velocity"
+        for body in body_list:
+            body.v+=body.a*t
+         
+        
+        "calculates each planet's new location"
+        for body in body_list:
+            body.s += body.v*t
+            body.s_vals.append(body.s.copy())
+    
+    def direct_euler_timestep(body_list, t):
+        """
+        Calculates new velocity and position, t = timestep, using Direct
+        Eurler method
+        """
+        global time
+        time+=t
+        
+        Body.acceleration(body_list)
+        "calculates each planet's new location"
+        for body in body_list:
+            body.s+=body.v*t
+            body.s_vals.append(body.s.copy())
+        
+        "calculates each planet's new velocity"
+        for body in body_list:
+            body.v += body.a*t
+        
+    def simulate(step, t):
+        """
+        Runs simulation for the duration length, saves position values
+        """
+        
+        global time
+        time = 0.0
+        body_list = Body.set_bodies()
+        Body.acceleration(body_list)
+        Body.acceleration(body_list)
+        for body in body_list:     
+            body.a_curr = body.a_next.copy()
+            body.a_prev = body.a_next.copy()
+        step(body_list, t)
+        print("Select simulation goal")
+        print("   1 - obtain orbital times")
+        print("   2 - obtain energy of system over time")
+        print("   3 - obtain time until planetary alignment")
+        goal = int(input("Enter 1, 2 or 3: "))
+        
+        "obtains orbits"
+        if goal == 1:
+            print("running simulation...")  
+            min_orbits=3
+            completed_orbits=0
+            while True:
+                step(body_list, t)
+                completed_orbits=Body.orbit(body_list, completed_orbits, min_orbits)
+                if completed_orbits==len(body_list)-1:
+                    break
+            Body.return_orbit(body_list)
+            
+            "obtains energies"
+        elif goal == 2:
+            with open('energy_file.txt', 'w') as output:
+                output.write("energy over time \n")
+            duration = float(input("Simulation duration (years): "))
+            total_steps = int(duration/t)
+            energy_period_steps = float(input("Frequency of energy \
+readings wrote to file(years^-1):"))
+            energy_period = int(1/energy_period_steps)
+            energy_list = []
+            time_list = []
+            print("running simulation...")  
+            with open('energy_file.txt', 'w') as output:
+                output.write("Energy(Earth masses*years^2) time (years) \n")
+            for i in range(total_steps):
+                step(body_list, t)
+                energy_list = Body.energy(body_list, energy_list)
+                time_list.append(time)
+                if i % energy_period == 0:
+                    with open('energy_file.txt', 'a') as output:
+                        output.write(f"{energy_list[-1]}          {time}  \n")
+            fig, ax = plt.subplots()
+            ax.plot(time_list, energy_list, color='b')
+            ax.set_xlabel('Time (years)')
+            ax.set_ylabel('Total Energy (Earth masses · AU² · yr⁻²)')
+            ax.set_title('Total System Energy over Time')
+            print("energies and times wrote to energy_file.txt")
+            print(f"minimum energy = {min(energy_list)}")
+            print(f"maximum energy = {max(energy_list)}")
+            print(f"amplitude = {(max(energy_list)-min(energy_list))/2}")
+            print(f"mean energy = {np.mean(energy_list)}")
+
+
+            "obtains alignment times"        
+        elif goal == 3:
+            degrees = float(input("maximum deviation from mean angle (°): "))
+            x = degrees*np.pi/180
+            print("running simulation...")
+            while True:
+                step(body_list, t)
+                if body_list[1].s[0]<0:
+                    break
+            while True:
+                step(body_list, t)
+                progress = Body.check_alignment(body_list, x)
+                if progress == False:
+                    print(f"Time until orbital alignment within {degrees}\
+ degrees: {time} years")
+                    break
+        return body_list
+        
+
+    
+def main():
+    with open('energy_file.txt', 'w') as output:
+        output.write("energy over time \n")
+    step = Body.choose_method()
+
+    t=0.001
+    
+    body_list = Body.simulate(step, t)
+    
+    width = body_list[-1].r + body_list[-1].body_radius + 0.15
+    xmin, xmax, ymin, ymax = -width, width, -width, width
+    fig = plt.figure()
+    ax = plt.axes() 
+    ax.set_facecolor('black')
+    ax.axis("scaled")
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_xlabel('Position (AU)')
+    ax.set_ylabel('Position (AU)')
+    patch_list = Body.display(body_list, ax, fig)
+    completed_timesteps = 0
+    number_frames = len(body_list[-1].s_vals)
+    
+    "runs the animation"
+    def animate(frame):
+        
+        nonlocal completed_timesteps
+        completed_timesteps+=1
+        for i, body in enumerate(body_list):
+            patch_list[i].center = tuple(body.s_vals[frame])
+        return patch_list
+    
+    fig.anim = FuncAnimation(fig, animate, \
+                          frames=number_frames, repeat=False, \
+                          interval=10, blit = False)
+    plt.show()
+
+    
+if __name__=="__main__":
+    main()
