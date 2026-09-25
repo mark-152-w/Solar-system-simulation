@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 import json
+import os
 
 global G
 G = 6.674*(10**-11)*(31556952**2)*(5.972*(10**24))/(149597870700**3)
@@ -45,7 +46,7 @@ class Body:
         reads values of bodies from file and returns body objects in a list
         """
         body_list=[]
-        with open("bodies.json") as f:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bodies.json")) as f:
             body_vals = json.load(f)
             for b in body_vals["bodies"]:
                 body_list.append(Body(b['name'], b['mass'], b['orbital_radius'], \
@@ -101,8 +102,8 @@ class Body:
                     distance = np.linalg.norm(other.s-body.s)
                     body.PE-=0.5*(G)*body.mass*other.mass/distance
             total_energy+=body.PE+body.KE
-            energy_list.append(total_energy)
-            return energy_list
+        energy_list.append(total_energy)
+        return energy_list
         
             
     
@@ -226,7 +227,7 @@ class Body:
     def direct_euler_timestep(body_list, t):
         """
         Calculates new velocity and position, t = timestep, using Direct
-        Eurler method
+        Euler method
         """
         global time
         time+=t
